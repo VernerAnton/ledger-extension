@@ -1,0 +1,66 @@
+LEDGER: Project Context for AI Assistants
+Hello AI Assistant! You are helping the user build Ledger, a native-feeling, split-pane document and code editor (a "Canvas") embedded directly inside the TypingMind chat UI.
+Please read this document carefully before suggesting code. This project operates under very specific, highly-constrained architectural rules.
+🎯 The Goal
+Replicate the "ChatGPT Canvas" or "Gemini Canvas" experience inside TypingMind.
+When the user asks the AI to write code or a long document, a beautiful editor panel should slide out from the right side of the screen. It features rich text editing, syntax highlighting, code execution, version history, and AI shortcut buttons (e.g., "Make this shorter", "Fix bugs").
+🧱 The Constraints (Why this is hard)
+TypingMind is a closed-source React application.
+TypingMind Plugins execute inside a strict <iframe sandbox="allow-scripts">. They have NO access to the main DOM, NO access to local storage, and CANNOT communicate with the parent chat window.
+Rule #1 of Ledger: Do NOT attempt to build the UI inside a sandboxed Plugin. It will fail.
+🏛️ The Hybrid Architecture
+To bypass the sandbox, Ledger is built using a 3-part Hybrid Architecture:
+1. The Trigger (TypingMind Plugin)
+What it is: A minimal OpenAI Function Spec (ledger_open) registered in TypingMind.
+What it does: When the AI wants to open the canvas, it calls this function. The plugin returns a tiny, hidden HTML <div> containing the document content (Base64 encoded) and metadata as data-* attributes.
+Why: This acts as an invisible "signal" to the extension.
+2. The Engine (TypingMind Extension)
+What it is: A single, massive Vanilla JavaScript file injected into TypingMind via the Extensions menu.
+What it does: It runs on the main DOM (unsandboxed). It uses a MutationObserver to watch the chat for the hidden signal <div>. When it sees the signal, it:
+Injects the HTML/CSS for the sliding right-hand UI panel.
+Dynamically loads Quill.js (for text) or CodeMirror 6 (for code) via CDN.
+Renders the AI's text into the editor.
+Tech Stack: Vanilla JS, DOM Manipulation, CDN Scripts. Do NOT use React, Vue, or build steps for the extension.
+3. The Backend (MCP FileSystem)
+What it is: A local/cloud Model Context Protocol (MCP) server.
+What it does: Replaces browser local storage. When the user clicks "Save" in the extension, the extension instructs the AI to use the MCP filesystem tools to physically write .md or .py files to the user's hard drive (~/ledger/documents/).
+🪄 The "Magic" Hacks (Crucial)
+AI Re-Entry (The __reactProps$ Trick)
+Because TypingMind is a React app, we cannot simply set textarea.value = "prompt" to submit a shortcut. To make our shortcut buttons (e.g., "Make it shorter") work, the Extension uses this specific pattern to force TypingMind to send a prompt:
+// 1. Find the input and the submit button
+const textArea = document.querySelector('[data-element-id="chat-input-textbox"]');
+const sendBtn = document.querySelector('[data-element-id="send-button"]');
+
+// 2. Hijack React's internal state
+const reactPropsKey = Object.keys(textArea).find(k => k.startsWith('__reactProps$'));
+textArea[reactPropsKey].onChange({
+  target: { value: promptText },
+  currentTarget: { value: promptText },
+  preventDefault: () => {},
+  stopPropagation: () => {},
+});
+
+// 3. Set native value & dispatch events (fallback)
+textArea.value = promptText;
+textArea.dispatchEvent(new Event('input', { bubbles: true }));
+textArea.dispatchEvent(new Event('change', { bubbles: true }));
+
+// 4. Wait for React to reconcile, then click send
+setTimeout(() => sendBtn.click(), 50);
+
+Known TypingMind DOM Selectors
+Do not guess the IDs of TypingMind elements. Use these:
+Chat Input: [data-element-id="chat-input-textbox"]
+Send Button: [data-element-id="send-button"]
+Sidebar: [data-element-id="workspace-bar"]
+Settings Button: [data-element-id="workspace-tab-settings"] (Use this as an anchor to inject our Ledger sidebar button).
+🗺️ Project Roadmap
+We are building this iteratively. When the user prompts you, check which phase they are currently on.
+Phase 0: Diagnostics & DOM Check (Verify MutationObserver and selectors).
+Phase 1: Signal Pipeline (Plugin triggers Extension).
+Phase 2: Native Editor (Draw UI, load Quill/CodeMirror).
+Phase 3: AI Re-entry & Shortcuts (Implement __reactProps$ hack).
+Phase 4: MCP Persistence (Save files to disk).
+Phase 5: Version History (Auto-save diffs, Undo/Redo).
+Phase 6: Code Execution & Polish (Pyodide, JS eval, Export to PDF).
+AI ASSISTANT INSTRUCTIONS: When generating code for this project, remember that the Extension code must be Vanilla JavaScript. Avoid suggesting npm install packages for the frontend; rely on CDN links (https://cdn.jsdelivr.net/...). Prioritize robust error handling around DOM selectors, as third-party UI updates can break them.
